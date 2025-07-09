@@ -1,0 +1,177 @@
+#include <SPI.h>
+#include <MFRC522.h>
+#include <LiquidCrystal_I2C.h>
+#include <Servo.h>
+#include <Wire.h>
+#include <RTClib.h> 
+
+#define endereco  0x27
+#define colunas   16
+#define linhas    2
+
+LiquidCrystal_I2C lcd(endereco, colunas, linhas); 
+RTC_DS3231 rtc;  
+
+#define verde 2
+#define vermelho 3
+#define SS_PIN 10
+#define RST_PIN 9
+#define PinoServo 6
+#define PinoRele 7  
+
+String tagID = "";
+bool acessoliberado = false;
+Servo servo1;
+
+// ALTERE/ADICIONE ESSES VALORES PARA NOVAS TAGS/CARTAO
+String TagsLiberadas[] = {"1A5E4E19", "CBF003C5", "B78421B3"}; 
+MFRC522 RFID(SS_PIN, RST_PIN);
+
+void setup() {
+  Serial.begin(9600); 
+
+  // Inicia a Comunicação no Display
+  lcd.init();
+  lcd.backlight();    
+  lcd.clear();        
+  lcd.setCursor(0, 0); 
+  lcd.print("Aproxime a TAG");
+
+  // Inicializando SPI e RFID
+  SPI.begin();
+  RFID.PCD_Init();  
+  servo1.attach(PinoServo);
+  servo1.write(0);    
+  pinMode(verde, OUTPUT);
+  pinMode(vermelho, OUTPUT);
+  pinMode(PinoRele, OUTPUT); 
+  digitalWrite(PinoRele, HIGH); 
+
+  // Inicializando o RTC
+  if (!rtc.begin()) {
+    lcd.clear();
+    lcd.print("RTC nao encontrado!");
+    Serial.println("RTC não encontrado!");
+    while (1); // teste Loop travado, RTC não está funcionando
+  }
+
+  if (rtc.lostPower()) {
+    lcd.clear();
+    lcd.print("Ajustando RTC...");
+    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));  // Define a hora com base na compilação
+  }
+}
+
+void loop() {
+  // Atualiza a hora e a data e exibe no LCD
+  DateTime now = rtc.now();
+
+  // Exibir a data (DD/MM/AAAA) e a hora na segunda linha
+  lcd.setCursor(0, 1); 
+  if (now.day() < 10) lcd.print("0"); 
+  lcd.print(now.day());
+  lcd.print("/");
+  if (now.month() < 10) lcd.print("0"); 
+  lcd.print(now.month());
+  lcd.print("/");
+  lcd.print(now.year());
+  lcd.print(" ");
+
+  if (now.hour() < 10) lcd.print("0"); 
+  lcd.print(now.hour());
+  lcd.print(":");
+  if (now.minute() < 10) lcd.print("0"); 
+  lcd.print(now.minute());
+  lcd.print(":");
+  if (now.second() < 10) lcd.print("0"); 
+  lcd.print(now.second());
+
+  // Verifica se existem tags/cartões
+  if (!RFID.PICC_IsNewCardPresent() || !RFID.PICC_ReadCardSerial()) {
+    return;
+  }
+
+  tagID = "";
+  // Coleta de tags
+  for (byte i = 0; i < RFID.uid.size; i++) {
+    tagID.concat(String(RFID.uid.uidByte[i] < 0x10 ? "0" : ""));
+    tagID.concat(String(RFID.uid.uidByte[i], HEX));
+  }
+  tagID.toUpperCase();
+  Serial.println("TAG detectada: " + tagID);
+
+  // Comparação das Tags analisadas com as cadastradas
+  acessoliberado = false;
+  for (int i = 0; i < (sizeof(TagsLiberadas)/sizeof(String)); i++) {
+    if (tagID.equals(TagsLiberadas[i])) {
+      acessoliberado = true; // Libera tag
+      break;
+    }
+  }
+
+  if (acessoliberado) {
+    Liberado();
+    Serial.println("Acesso Liberado para a TAG: " + tagID);
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Acesso Liberado");
+    abrirCancela();
+    acenderRele();  
+    delay(3000);
+    fecharCancela();
+    apagarRele();  
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Aproxime a TAG");
+  } else {
+    Negado();  
+    Serial.println("Acesso Negado para a TAG: " + tagID);
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Acesso Negado");
+    delay(3000);  
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Aproxime a TAG");
+  }
+
+  delay(1000);
+  RFID.PICC_HaltA();
+  RFID.PCD_StopCrypto1();
+}
+
+void abrirCancela() {
+  for (int pos = 0; pos <= 90; pos++) {
+    servo1.write(pos);
+    delay(15); 
+  }
+}
+
+void fecharCancela() {
+  for (int pos = 90; pos >= 0; pos--) {
+    servo1.write(pos);
+    delay(15);  
+  }
+}
+
+void Liberado() {
+  digitalWrite(verde, HIGH);  
+  delay(2000);
+  digitalWrite(verde, LOW);  
+  acessoliberado = false;
+}
+
+void Negado() {
+  digitalWrite(vermelho, HIGH);  
+  delay(1000);  
+  digitalWrite(vermelho, LOW);  
+}
+
+
+void acenderRele() {
+  digitalWrite(PinoRele, LOW); 
+}
+
+void apagarRele() {
+  digitalWrite(PinoRele, HIGH);  
+}
